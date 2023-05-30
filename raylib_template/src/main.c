@@ -1,157 +1,206 @@
+/*******************************************************************************************
+*
+*   raylib [core] example - 3d camera first person
+*
+*   Example originally created with raylib 1.3, last time updated with raylib 1.3
+*
+*   Example licensed under an unmodified zlib/libpng license, which is an OSI-certified,
+*   BSD-like license that allows static linking with closed source software
+*
+*   Copyright (c) 2015-2023 Ramon Santamaria (@raysan5)
+*
+********************************************************************************************/
+
 #include "raylib.h"
-#include <stdio.h>
-#include <stdlib.h>
-#include <math.h>
+#include "rcamera.h"
 
-#define POINTS 8
-#define EDGES  12
-#define SCALE  50
+#define MAX_COLUMNS 20
 
-typedef struct {
-    int x;
-    int y;
-    int z;
-} vertex;
-
-typedef struct {
-    vertex *a;
-    vertex *b;
-} edge;
-
-typedef struct {
-    int s;
-    int e;
-} pair;
-
-typedef struct {
-    edge *p1;
-    edge *p2;
-    edge *p3;
-    edge *p4;
-} face;
-
-typedef struct {
-    face *f1;
-    face *f2;
-    face *f3;
-    face *f4;
-    face *f5;
-    face *f6;
-} cube;
-
-void draw_edge(edge *pair);
-void get_projection(vertex *points[], int SIZE, const int focal_length);
-
-
+//------------------------------------------------------------------------------------
+// Program main entry point
+//------------------------------------------------------------------------------------
 int main(void)
 {
+    // Initialization
+    //--------------------------------------------------------------------------------------
     const int screenWidth = 800;
     const int screenHeight = 450;
-    const int focal_length = 100;
 
-    vertex *points[POINTS];
-    edge *lines[EDGES];
-    pair list[EDGES] = {{.s = 0, .e = 1},
-                        {.s = 0, .e = 3},
-                        {.s = 0, .e = 7},
-                        {.s = 1, .e = 2},
-                        {.s = 1, .e = 4},
-                        {.s = 2, .e = 3},
-                        {.s = 2, .e = 5},
-                        {.s = 3, .e = 6},
-                        {.s = 4, .e = 5},
-                        {.s = 4, .e = 7},
-                        {.s = 5, .e = 6},
-                        {.s = 6, .e = 7}};
+    InitWindow(screenWidth, screenHeight, "raylib [core] example - 3d camera first person");
 
-    for (int i = 0; i < POINTS; i++) {
-        points[i] = malloc(sizeof(vertex));
-        points[i]->x = 0;
-        points[i]->y = 0;
-        points[i]->z = 0;
+    // Define the camera to look into our 3d world (position, target, up vector)
+    Camera camera = { 0 };
+    camera.position = (Vector3){ 0.0f, 2.0f, 4.0f };    // Camera position
+    camera.target = (Vector3){ 0.0f, 2.0f, 0.0f };      // Camera looking at point
+    camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };          // Camera up vector (rotation towards target)
+    camera.fovy = 60.0f;                                // Camera field-of-view Y
+    camera.projection = CAMERA_PERSPECTIVE;             // Camera projection type
+
+    int cameraMode = CAMERA_FIRST_PERSON;
+
+    // Generates some random columns
+    float heights[MAX_COLUMNS] = { 0 };
+    Vector3 positions[MAX_COLUMNS] = { 0 };
+    Color colors[MAX_COLUMNS] = { 0 };
+
+    for (int i = 0; i < MAX_COLUMNS; i++)
+    {
+        heights[i] = (float)GetRandomValue(1, 12);
+        positions[i] = (Vector3){ (float)GetRandomValue(-15, 15), heights[i]/2.0f, (float)GetRandomValue(-15, 15) };
+        colors[i] = (Color){ GetRandomValue(20, 255), GetRandomValue(10, 55), 30, 255 };
     }
 
-    for (int i = 0; i < EDGES; i++) {
-        lines[i] = malloc(sizeof(edge));
-        lines[i]->a = NULL;
-        lines[i]->b = NULL;
-    }
+    DisableCursor();                    // Limit cursor to relative movement inside the window
 
-    for (int i = 0; i < EDGES; i++) {
-        lines[i]->a = points[list[i].s];
-        lines[i]->b = points[list[i].e];
-    }
-
-    // set points
-    points[0]->x = 5*SCALE;
-    points[0]->y = -20*SCALE;
-    points[0]->z = 5*SCALE;
-
-    points[1]->x = 5*SCALE;
-    points[1]->y = -10*SCALE;
-    points[1]->z = 5*SCALE;
-
-    points[2]->x = -5*SCALE;
-    points[2]->y = -10*SCALE;
-    points[2]->z = 5*SCALE;
-
-    points[3]->x = -5*SCALE;
-    points[3]->y = -20*SCALE;
-    points[3]->z = 5*SCALE;
-
-    points[4]->x = 5*SCALE;
-    points[4]->y = -10*SCALE;
-    points[4]->z = -5*SCALE;
-
-    points[5]->x = -5*SCALE;
-    points[5]->y = -10*SCALE;
-    points[5]->z = -5*SCALE;
-
-    points[6]->x = -5*SCALE;
-    points[6]->y = -20*SCALE;
-    points[6]->z = -5*SCALE;
-
-    points[7]->x = 5*SCALE;
-    points[7]->y = -20*SCALE;
-    points[7]->z = -5*SCALE;
-
-    get_projection(points, POINTS, focal_length);
-
-
-    InitWindow(screenWidth, screenHeight, "ray casting");
+    SetTargetFPS(60);                   // Set our game to run at 60 frames-per-second
+    //--------------------------------------------------------------------------------------
 
     // Main game loop
     while (!WindowShouldClose())        // Detect window close button or ESC key
     {
-        BeginDrawing();
-        for (int i = 0; i < EDGES; i++) {
-            draw_edge(lines[i]);
+        // Update
+        //----------------------------------------------------------------------------------
+        // Switch camera mode
+        if (IsKeyPressed(KEY_ONE))
+        {
+            cameraMode = CAMERA_FREE;
+            camera.up = (Vector3){ 0.0f, 1.0f, 0.0f }; // Reset roll
         }
+
+        if (IsKeyPressed(KEY_TWO))
+        {
+            cameraMode = CAMERA_FIRST_PERSON;
+            camera.up = (Vector3){ 0.0f, 1.0f, 0.0f }; // Reset roll
+        }
+
+        if (IsKeyPressed(KEY_THREE))
+        {
+            cameraMode = CAMERA_THIRD_PERSON;
+            camera.up = (Vector3){ 0.0f, 1.0f, 0.0f }; // Reset roll
+        }
+
+        if (IsKeyPressed(KEY_FOUR))
+        {
+            cameraMode = CAMERA_ORBITAL;
+            camera.up = (Vector3){ 0.0f, 1.0f, 0.0f }; // Reset roll
+        }
+
+        // Switch camera projection
+        if (IsKeyPressed(KEY_P))
+        {
+            if (camera.projection == CAMERA_PERSPECTIVE)
+            {
+                // Create isometric view
+                cameraMode = CAMERA_THIRD_PERSON;
+                // Note: The target distance is related to the render distance in the orthographic projection
+                camera.position = (Vector3){ 0.0f, 2.0f, -100.0f };
+                camera.target = (Vector3){ 0.0f, 2.0f, 0.0f };
+                camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
+                camera.projection = CAMERA_ORTHOGRAPHIC;
+                camera.fovy = 20.0f; // near plane width in CAMERA_ORTHOGRAPHIC
+                CameraYaw(&camera, -135 * DEG2RAD, true);
+                CameraPitch(&camera, -45 * DEG2RAD, true, true, false);
+            }
+            else if (camera.projection == CAMERA_ORTHOGRAPHIC)
+            {
+                // Reset to default view
+                cameraMode = CAMERA_THIRD_PERSON;
+                camera.position = (Vector3){ 0.0f, 2.0f, 10.0f };
+                camera.target = (Vector3){ 0.0f, 2.0f, 0.0f };
+                camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
+                camera.projection = CAMERA_PERSPECTIVE;
+                camera.fovy = 60.0f;
+            }
+        }
+
+        // Update camera computes movement internally depending on the camera mode
+        // Some default standard keyboard/mouse inputs are hardcoded to simplify use
+        // For advance camera controls, it's reecommended to compute camera movement manually
+        UpdateCamera(&camera, cameraMode);                  // Update camera
+
+/*
+        // Camera PRO usage example (EXPERIMENTAL)
+        // This new camera function allows custom movement/rotation values to be directly provided
+        // as input parameters, with this approach, rcamera module is internally independent of raylib inputs
+        UpdateCameraPro(&camera,
+            (Vector3){
+                (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP))*0.1f -      // Move forward-backward
+                (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN))*0.1f,    
+                (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT))*0.1f -   // Move right-left
+                (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT))*0.1f,
+                0.0f                                                // Move up-down
+            },
+            (Vector3){
+                GetMouseDelta().x*0.05f,                            // Rotation: yaw
+                GetMouseDelta().y*0.05f,                            // Rotation: pitch
+                0.0f                                                // Rotation: roll
+            },
+            GetMouseWheelMove()*2.0f);                              // Move to target (zoom)
+*/
+        //----------------------------------------------------------------------------------
+
+        // Draw
+        //----------------------------------------------------------------------------------
+        BeginDrawing();
+
+            ClearBackground(RAYWHITE);
+
+            BeginMode3D(camera);
+
+                DrawPlane((Vector3){ 0.0f, 0.0f, 0.0f }, (Vector2){ 32.0f, 32.0f }, LIGHTGRAY); // Draw ground
+                DrawCube((Vector3){ -16.0f, 2.5f, 0.0f }, 1.0f, 5.0f, 32.0f, BLUE);     // Draw a blue wall
+                DrawCube((Vector3){ 16.0f, 2.5f, 0.0f }, 1.0f, 5.0f, 32.0f, LIME);      // Draw a green wall
+                DrawCube((Vector3){ 0.0f, 2.5f, 16.0f }, 32.0f, 5.0f, 1.0f, GOLD);      // Draw a yellow wall
+
+                // Draw some cubes around
+                for (int i = 0; i < MAX_COLUMNS; i++)
+                {
+                    DrawCube(positions[i], 2.0f, heights[i], 2.0f, colors[i]);
+                    DrawCubeWires(positions[i], 2.0f, heights[i], 2.0f, MAROON);
+                }
+
+                // Draw player cube
+                if (cameraMode == CAMERA_THIRD_PERSON)
+                {
+                    DrawCube(camera.target, 0.5f, 0.5f, 0.5f, PURPLE);
+                    DrawCubeWires(camera.target, 0.5f, 0.5f, 0.5f, DARKPURPLE);
+                }
+
+            EndMode3D();
+
+            // Draw info boxes
+            DrawRectangle(5, 5, 330, 100, Fade(SKYBLUE, 0.5f));
+            DrawRectangleLines(5, 5, 330, 100, BLUE);
+
+            DrawText("Camera controls:", 15, 15, 10, BLACK);
+            DrawText("- Move keys: W, A, S, D, Space, Left-Ctrl", 15, 30, 10, BLACK);
+            DrawText("- Look around: arrow keys or mouse", 15, 45, 10, BLACK);
+            DrawText("- Camera mode keys: 1, 2, 3, 4", 15, 60, 10, BLACK);
+            DrawText("- Zoom keys: num-plus, num-minus or mouse scroll", 15, 75, 10, BLACK);
+            DrawText("- Camera projection key: P", 15, 90, 10, BLACK);
+
+            DrawRectangle(600, 5, 195, 100, Fade(SKYBLUE, 0.5f));
+            DrawRectangleLines(600, 5, 195, 100, BLUE);
+
+            DrawText("Camera status:", 610, 15, 10, BLACK);
+            DrawText(TextFormat("- Mode: %s", (cameraMode == CAMERA_FREE) ? "FREE" :
+                                              (cameraMode == CAMERA_FIRST_PERSON) ? "FIRST_PERSON" :
+                                              (cameraMode == CAMERA_THIRD_PERSON) ? "THIRD_PERSON" :
+                                              (cameraMode == CAMERA_ORBITAL) ? "ORBITAL" : "CUSTOM"), 610, 30, 10, BLACK);
+            DrawText(TextFormat("- Projection: %s", (camera.projection == CAMERA_PERSPECTIVE) ? "PERSPECTIVE" :
+                                                    (camera.projection == CAMERA_ORTHOGRAPHIC) ? "ORTHOGRAPHIC" : "CUSTOM"), 610, 45, 10, BLACK);
+            DrawText(TextFormat("- Position: (%06.3f, %06.3f, %06.3f)", camera.position.x, camera.position.y, camera.position.z), 610, 60, 10, BLACK);
+            DrawText(TextFormat("- Target: (%06.3f, %06.3f, %06.3f)", camera.target.x, camera.target.y, camera.target.z), 610, 75, 10, BLACK);
+            DrawText(TextFormat("- Up: (%06.3f, %06.3f, %06.3f)", camera.up.x, camera.up.y, camera.up.z), 610, 90, 10, BLACK);
+
         EndDrawing();
+        //----------------------------------------------------------------------------------
     }
 
+    // De-Initialization
+    //--------------------------------------------------------------------------------------
     CloseWindow();        // Close window and OpenGL context
-
-    // deallocate structs
-    for (int i = 0; i < POINTS; i++) {
-        free(points[i]);
-    }
-
-    for (int i = 0; i < EDGES; i++) {
-        free(lines[i]);
-    }
+    //--------------------------------------------------------------------------------------
 
     return 0;
-}
-
-void draw_edge(edge *pair) {
-    DrawLine(pair->a->x, pair->a->z, pair->b->x, pair->b->z, RED); // start x,y end x,y color
-}
-
-void get_projection(vertex *points[], int SIZE, const int focal_length) {
-    for (int i = 0; i < SIZE; i++) {
-        points[i]->x = ((points[i]->x)*focal_length)/(focal_length+points[i]->y) + 800/2;
-        points[i]->z = ((points[i]->z)*focal_length)/(focal_length+points[i]->y) + 450/2;
-        points[i]->y = 0;
-    }
 }
