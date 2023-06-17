@@ -1,20 +1,46 @@
 /*******************************************************************************************
 *
-*   raylib [core] example - 3d camera first person
+*   raylib [core] example - 2d camera platformer
 *
-*   Example originally created with raylib 1.3, last time updated with raylib 1.3
+*   Example originally created with raylib 2.5, last time updated with raylib 3.0
+*
+*   Example contributed by arvyy (@arvyy) and reviewed by Ramon Santamaria (@raysan5)
 *
 *   Example licensed under an unmodified zlib/libpng license, which is an OSI-certified,
 *   BSD-like license that allows static linking with closed source software
 *
-*   Copyright (c) 2015-2023 Ramon Santamaria (@raysan5)
+*   Copyright (c) 2019-2023 arvyy (@arvyy)
 *
 ********************************************************************************************/
 
 #include "raylib.h"
-#include "rcamera.h"
+#include "raymath.h"
 
-#define MAX_COLUMNS 20
+#define G 400
+#define PLAYER_JUMP_SPD 350.0f
+#define PLAYER_HOR_SPD 200.0f
+
+typedef struct Player {
+    Vector2 position;
+    float speed;
+    bool canJump;
+} Player;
+
+typedef struct EnvItem {
+    Rectangle rect;
+    int blocking;
+    Color color;
+} EnvItem;
+
+//----------------------------------------------------------------------------------
+// Module functions declaration
+//----------------------------------------------------------------------------------
+void UpdatePlayer(Player *player, EnvItem *envItems, int envItemsLength, float delta);
+void UpdateCameraCenter(Camera2D *camera, Player *player, EnvItem *envItems, int envItemsLength, float delta, int width, int height);
+void UpdateCameraCenterInsideMap(Camera2D *camera, Player *player, EnvItem *envItems, int envItemsLength, float delta, int width, int height);
+void UpdateCameraCenterSmoothFollow(Camera2D *camera, Player *player, EnvItem *envItems, int envItemsLength, float delta, int width, int height);
+void UpdateCameraEvenOutOnLanding(Camera2D *camera, Player *player, EnvItem *envItems, int envItemsLength, float delta, int width, int height);
+void UpdateCameraPlayerBoundsPush(Camera2D *camera, Player *player, EnvItem *envItems, int envItemsLength, float delta, int width, int height);
 
 //------------------------------------------------------------------------------------
 // Program main entry point
@@ -26,172 +52,99 @@ int main(void)
     const int screenWidth = 800;
     const int screenHeight = 450;
 
-    InitWindow(screenWidth, screenHeight, "raylib [core] example - 3d camera first person");
+    InitWindow(screenWidth, screenHeight, "raylib [core] example - 2d camera");
 
-    // Define the camera to look into our 3d world (position, target, up vector)
-    Camera camera = { 0 };
-    camera.position = (Vector3){ 0.0f, 2.0f, 4.0f };    // Camera position
-    camera.target = (Vector3){ 0.0f, 2.0f, 0.0f };      // Camera looking at point
-    camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };          // Camera up vector (rotation towards target)
-    camera.fovy = 60.0f;                                // Camera field-of-view Y
-    camera.projection = CAMERA_PERSPECTIVE;             // Camera projection type
+    Player player = { 0 };
+    player.position = (Vector2){ 400, 280 };
+    player.speed = 0;
+    player.canJump = false;
+    EnvItem envItems[] = {
+        {{ 0, 0, 1000, 400 }, 0, LIGHTGRAY },
+        {{ 0, 400, 1000, 200 }, 1, GRAY },
+        {{ 300, 200, 400, 10 }, 1, GRAY },
+        {{ 250, 300, 100, 10 }, 1, GRAY },
+        {{ 650, 300, 100, 10 }, 1, GRAY }
+    };
 
-    int cameraMode = CAMERA_FIRST_PERSON;
+    int envItemsLength = sizeof(envItems)/sizeof(envItems[0]);
 
-    // Generates some random columns
-    float heights[MAX_COLUMNS] = { 0 };
-    Vector3 positions[MAX_COLUMNS] = { 0 };
-    Color colors[MAX_COLUMNS] = { 0 };
+    Camera2D camera = { 0 };
+    camera.target = player.position;
+    camera.offset = (Vector2){ screenWidth/2.0f, screenHeight/2.0f };
+    camera.rotation = 0.0f;
+    camera.zoom = 1.0f;
 
-    for (int i = 0; i < MAX_COLUMNS; i++)
-    {
-        heights[i] = (float)GetRandomValue(1, 12);
-        positions[i] = (Vector3){ (float)GetRandomValue(-15, 15), heights[i]/2.0f, (float)GetRandomValue(-15, 15) };
-        colors[i] = (Color){ GetRandomValue(20, 255), GetRandomValue(10, 55), 30, 255 };
-    }
+    // Store pointers to the multiple update camera functions
+    void (*cameraUpdaters[])(Camera2D*, Player*, EnvItem*, int, float, int, int) = {
+        UpdateCameraCenter,
+        UpdateCameraCenterInsideMap,
+        UpdateCameraCenterSmoothFollow,
+        UpdateCameraEvenOutOnLanding,
+        UpdateCameraPlayerBoundsPush
+    };
 
-    DisableCursor();                    // Limit cursor to relative movement inside the window
+    int cameraOption = 0;
+    int cameraUpdatersLength = sizeof(cameraUpdaters)/sizeof(cameraUpdaters[0]);
 
-    SetTargetFPS(60);                   // Set our game to run at 60 frames-per-second
+    char *cameraDescriptions[] = {
+        "Follow player center",
+        "Follow player center, but clamp to map edges",
+        "Follow player center; smoothed",
+        "Follow player center horizontally; updateplayer center vertically after landing",
+        "Player push camera on getting too close to screen edge"
+    };
+
+    SetTargetFPS(60);
     //--------------------------------------------------------------------------------------
 
     // Main game loop
-    while (!WindowShouldClose())        // Detect window close button or ESC key
+    while (!WindowShouldClose())
     {
         // Update
         //----------------------------------------------------------------------------------
-        // Switch camera mode
-        if (IsKeyPressed(KEY_ONE))
+        float deltaTime = GetFrameTime();
+
+        UpdatePlayer(&player, envItems, envItemsLength, deltaTime);
+
+        camera.zoom += ((float)GetMouseWheelMove()*0.05f);
+
+        if (camera.zoom > 3.0f) camera.zoom = 3.0f;
+        else if (camera.zoom < 0.25f) camera.zoom = 0.25f;
+
+        if (IsKeyPressed(KEY_R))
         {
-            cameraMode = CAMERA_FREE;
-            camera.up = (Vector3){ 0.0f, 1.0f, 0.0f }; // Reset roll
+            camera.zoom = 1.0f;
+            player.position = (Vector2){ 400, 280 };
         }
 
-        if (IsKeyPressed(KEY_TWO))
-        {
-            cameraMode = CAMERA_FIRST_PERSON;
-            camera.up = (Vector3){ 0.0f, 1.0f, 0.0f }; // Reset roll
-        }
+        if (IsKeyPressed(KEY_C)) cameraOption = (cameraOption + 1)%cameraUpdatersLength;
 
-        if (IsKeyPressed(KEY_THREE))
-        {
-            cameraMode = CAMERA_THIRD_PERSON;
-            camera.up = (Vector3){ 0.0f, 1.0f, 0.0f }; // Reset roll
-        }
-
-        if (IsKeyPressed(KEY_FOUR))
-        {
-            cameraMode = CAMERA_ORBITAL;
-            camera.up = (Vector3){ 0.0f, 1.0f, 0.0f }; // Reset roll
-        }
-
-        // Switch camera projection
-        if (IsKeyPressed(KEY_P))
-        {
-            if (camera.projection == CAMERA_PERSPECTIVE)
-            {
-                // Create isometric view
-                cameraMode = CAMERA_THIRD_PERSON;
-                // Note: The target distance is related to the render distance in the orthographic projection
-                camera.position = (Vector3){ 0.0f, 2.0f, -100.0f };
-                camera.target = (Vector3){ 0.0f, 2.0f, 0.0f };
-                camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
-                camera.projection = CAMERA_ORTHOGRAPHIC;
-                camera.fovy = 20.0f; // near plane width in CAMERA_ORTHOGRAPHIC
-                CameraYaw(&camera, -135 * DEG2RAD, true);
-                CameraPitch(&camera, -45 * DEG2RAD, true, true, false);
-            }
-            else if (camera.projection == CAMERA_ORTHOGRAPHIC)
-            {
-                // Reset to default view
-                cameraMode = CAMERA_THIRD_PERSON;
-                camera.position = (Vector3){ 0.0f, 2.0f, 10.0f };
-                camera.target = (Vector3){ 0.0f, 2.0f, 0.0f };
-                camera.up = (Vector3){ 0.0f, 1.0f, 0.0f };
-                camera.projection = CAMERA_PERSPECTIVE;
-                camera.fovy = 60.0f;
-            }
-        }
-
-        // Update camera computes movement internally depending on the camera mode
-        // Some default standard keyboard/mouse inputs are hardcoded to simplify use
-        // For advance camera controls, it's reecommended to compute camera movement manually
-        UpdateCamera(&camera, cameraMode);                  // Update camera
-
-/*
-        // Camera PRO usage example (EXPERIMENTAL)
-        // This new camera function allows custom movement/rotation values to be directly provided
-        // as input parameters, with this approach, rcamera module is internally independent of raylib inputs
-        UpdateCameraPro(&camera,
-            (Vector3){
-                (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP))*0.1f -      // Move forward-backward
-                (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN))*0.1f,    
-                (IsKeyDown(KEY_D) || IsKeyDown(KEY_RIGHT))*0.1f -   // Move right-left
-                (IsKeyDown(KEY_A) || IsKeyDown(KEY_LEFT))*0.1f,
-                0.0f                                                // Move up-down
-            },
-            (Vector3){
-                GetMouseDelta().x*0.05f,                            // Rotation: yaw
-                GetMouseDelta().y*0.05f,                            // Rotation: pitch
-                0.0f                                                // Rotation: roll
-            },
-            GetMouseWheelMove()*2.0f);                              // Move to target (zoom)
-*/
+        // Call update camera function by its pointer
+        cameraUpdaters[cameraOption](&camera, &player, envItems, envItemsLength, deltaTime, screenWidth, screenHeight);
         //----------------------------------------------------------------------------------
 
         // Draw
         //----------------------------------------------------------------------------------
         BeginDrawing();
 
-            ClearBackground(RAYWHITE);
+            ClearBackground(LIGHTGRAY);
 
-            BeginMode3D(camera);
+            BeginMode2D(camera);
 
-                DrawPlane((Vector3){ 0.0f, 0.0f, 0.0f }, (Vector2){ 32.0f, 32.0f }, LIGHTGRAY); // Draw ground
-                DrawCube((Vector3){ -16.0f, 2.5f, 0.0f }, 1.0f, 5.0f, 32.0f, BLUE);     // Draw a blue wall
-                DrawCube((Vector3){ 16.0f, 2.5f, 0.0f }, 1.0f, 5.0f, 32.0f, LIME);      // Draw a green wall
-                DrawCube((Vector3){ 0.0f, 2.5f, 16.0f }, 32.0f, 5.0f, 1.0f, GOLD);      // Draw a yellow wall
+                for (int i = 0; i < envItemsLength; i++) DrawRectangleRec(envItems[i].rect, envItems[i].color);
 
-                // Draw some cubes around
-                for (int i = 0; i < MAX_COLUMNS; i++)
-                {
-                    DrawCube(positions[i], 2.0f, heights[i], 2.0f, colors[i]);
-                    DrawCubeWires(positions[i], 2.0f, heights[i], 2.0f, MAROON);
-                }
+                Rectangle playerRect = { player.position.x - 20, player.position.y - 40, 40, 40 };
+                DrawRectangleRec(playerRect, RED);
 
-                // Draw player cube
-                if (cameraMode == CAMERA_THIRD_PERSON)
-                {
-                    DrawCube(camera.target, 0.5f, 0.5f, 0.5f, PURPLE);
-                    DrawCubeWires(camera.target, 0.5f, 0.5f, 0.5f, DARKPURPLE);
-                }
+            EndMode2D();
 
-            EndMode3D();
-
-            // Draw info boxes
-            DrawRectangle(5, 5, 330, 100, Fade(SKYBLUE, 0.5f));
-            DrawRectangleLines(5, 5, 330, 100, BLUE);
-
-            DrawText("Camera controls:", 15, 15, 10, BLACK);
-            DrawText("- Move keys: W, A, S, D, Space, Left-Ctrl", 15, 30, 10, BLACK);
-            DrawText("- Look around: arrow keys or mouse", 15, 45, 10, BLACK);
-            DrawText("- Camera mode keys: 1, 2, 3, 4", 15, 60, 10, BLACK);
-            DrawText("- Zoom keys: num-plus, num-minus or mouse scroll", 15, 75, 10, BLACK);
-            DrawText("- Camera projection key: P", 15, 90, 10, BLACK);
-
-            DrawRectangle(600, 5, 195, 100, Fade(SKYBLUE, 0.5f));
-            DrawRectangleLines(600, 5, 195, 100, BLUE);
-
-            DrawText("Camera status:", 610, 15, 10, BLACK);
-            DrawText(TextFormat("- Mode: %s", (cameraMode == CAMERA_FREE) ? "FREE" :
-                                              (cameraMode == CAMERA_FIRST_PERSON) ? "FIRST_PERSON" :
-                                              (cameraMode == CAMERA_THIRD_PERSON) ? "THIRD_PERSON" :
-                                              (cameraMode == CAMERA_ORBITAL) ? "ORBITAL" : "CUSTOM"), 610, 30, 10, BLACK);
-            DrawText(TextFormat("- Projection: %s", (camera.projection == CAMERA_PERSPECTIVE) ? "PERSPECTIVE" :
-                                                    (camera.projection == CAMERA_ORTHOGRAPHIC) ? "ORTHOGRAPHIC" : "CUSTOM"), 610, 45, 10, BLACK);
-            DrawText(TextFormat("- Position: (%06.3f, %06.3f, %06.3f)", camera.position.x, camera.position.y, camera.position.z), 610, 60, 10, BLACK);
-            DrawText(TextFormat("- Target: (%06.3f, %06.3f, %06.3f)", camera.target.x, camera.target.y, camera.target.z), 610, 75, 10, BLACK);
-            DrawText(TextFormat("- Up: (%06.3f, %06.3f, %06.3f)", camera.up.x, camera.up.y, camera.up.z), 610, 90, 10, BLACK);
+            DrawText("Controls:", 20, 20, 10, BLACK);
+            DrawText("- Right/Left to move", 40, 40, 10, DARKGRAY);
+            DrawText("- Space to jump", 40, 60, 10, DARKGRAY);
+            DrawText("- Mouse Wheel to Zoom in-out, R to reset zoom", 40, 80, 10, DARKGRAY);
+            DrawText("- C to change camera mode", 40, 100, 10, DARKGRAY);
+            DrawText("Current camera mode:", 20, 120, 10, BLACK);
+            DrawText(cameraDescriptions[cameraOption], 40, 140, 10, DARKGRAY);
 
         EndDrawing();
         //----------------------------------------------------------------------------------
@@ -203,4 +156,143 @@ int main(void)
     //--------------------------------------------------------------------------------------
 
     return 0;
+}
+
+void UpdatePlayer(Player *player, EnvItem *envItems, int envItemsLength, float delta)
+{
+    if (IsKeyDown(KEY_LEFT)) player->position.x -= PLAYER_HOR_SPD*delta;
+    if (IsKeyDown(KEY_RIGHT)) player->position.x += PLAYER_HOR_SPD*delta;
+    if (IsKeyDown(KEY_SPACE) && player->canJump)
+    {
+        player->speed = -PLAYER_JUMP_SPD;
+        player->canJump = false;
+    }
+
+    int hitObstacle = 0;
+    for (int i = 0; i < envItemsLength; i++)
+    {
+        EnvItem *ei = envItems + i;
+        Vector2 *p = &(player->position);
+        if (ei->blocking &&
+            ei->rect.x <= p->x &&
+            ei->rect.x + ei->rect.width >= p->x &&
+            ei->rect.y >= p->y &&
+            ei->rect.y <= p->y + player->speed*delta)
+        {
+            hitObstacle = 1;
+            player->speed = 0.0f;
+            p->y = ei->rect.y;
+        }
+    }
+
+    if (!hitObstacle)
+    {
+        player->position.y += player->speed*delta;
+        player->speed += G*delta;
+        player->canJump = false;
+    }
+    else player->canJump = true;
+}
+
+void UpdateCameraCenter(Camera2D *camera, Player *player, EnvItem *envItems, int envItemsLength, float delta, int width, int height)
+{
+    camera->offset = (Vector2){ width/2.0f, height/2.0f };
+    camera->target = player->position;
+}
+
+void UpdateCameraCenterInsideMap(Camera2D *camera, Player *player, EnvItem *envItems, int envItemsLength, float delta, int width, int height)
+{
+    camera->target = player->position;
+    camera->offset = (Vector2){ width/2.0f, height/2.0f };
+    float minX = 1000, minY = 1000, maxX = -1000, maxY = -1000;
+
+    for (int i = 0; i < envItemsLength; i++)
+    {
+        EnvItem *ei = envItems + i;
+        minX = fminf(ei->rect.x, minX);
+        maxX = fmaxf(ei->rect.x + ei->rect.width, maxX);
+        minY = fminf(ei->rect.y, minY);
+        maxY = fmaxf(ei->rect.y + ei->rect.height, maxY);
+    }
+
+    Vector2 max = GetWorldToScreen2D((Vector2){ maxX, maxY }, *camera);
+    Vector2 min = GetWorldToScreen2D((Vector2){ minX, minY }, *camera);
+
+    if (max.x < width) camera->offset.x = width - (max.x - width/2);
+    if (max.y < height) camera->offset.y = height - (max.y - height/2);
+    if (min.x > 0) camera->offset.x = width/2 - min.x;
+    if (min.y > 0) camera->offset.y = height/2 - min.y;
+}
+
+void UpdateCameraCenterSmoothFollow(Camera2D *camera, Player *player, EnvItem *envItems, int envItemsLength, float delta, int width, int height)
+{
+    static float minSpeed = 30;
+    static float minEffectLength = 10;
+    static float fractionSpeed = 0.8f;
+
+    camera->offset = (Vector2){ width/2.0f, height/2.0f };
+    Vector2 diff = Vector2Subtract(player->position, camera->target);
+    float length = Vector2Length(diff);
+
+    if (length > minEffectLength)
+    {
+        float speed = fmaxf(fractionSpeed*length, minSpeed);
+        camera->target = Vector2Add(camera->target, Vector2Scale(diff, speed*delta/length));
+    }
+}
+
+void UpdateCameraEvenOutOnLanding(Camera2D *camera, Player *player, EnvItem *envItems, int envItemsLength, float delta, int width, int height)
+{
+    static float evenOutSpeed = 700;
+    static int eveningOut = false;
+    static float evenOutTarget;
+
+    camera->offset = (Vector2){ width/2.0f, height/2.0f };
+    camera->target.x = player->position.x;
+
+    if (eveningOut)
+    {
+        if (evenOutTarget > camera->target.y)
+        {
+            camera->target.y += evenOutSpeed*delta;
+
+            if (camera->target.y > evenOutTarget)
+            {
+                camera->target.y = evenOutTarget;
+                eveningOut = 0;
+            }
+        }
+        else
+        {
+            camera->target.y -= evenOutSpeed*delta;
+
+            if (camera->target.y < evenOutTarget)
+            {
+                camera->target.y = evenOutTarget;
+                eveningOut = 0;
+            }
+        }
+    }
+    else
+    {
+        if (player->canJump && (player->speed == 0) && (player->position.y != camera->target.y))
+        {
+            eveningOut = 1;
+            evenOutTarget = player->position.y;
+        }
+    }
+}
+
+void UpdateCameraPlayerBoundsPush(Camera2D *camera, Player *player, EnvItem *envItems, int envItemsLength, float delta, int width, int height)
+{
+    static Vector2 bbox = { 0.2f, 0.2f };
+
+    Vector2 bboxWorldMin = GetScreenToWorld2D((Vector2){ (1 - bbox.x)*0.5f*width, (1 - bbox.y)*0.5f*height }, *camera);
+    Vector2 bboxWorldMax = GetScreenToWorld2D((Vector2){ (1 + bbox.x)*0.5f*width, (1 + bbox.y)*0.5f*height }, *camera);
+    camera->offset = (Vector2){ (1 - bbox.x)*0.5f * width, (1 - bbox.y)*0.5f*height };
+
+    if (player->position.x < bboxWorldMin.x) camera->target.x = player->position.x;
+    if (player->position.y < bboxWorldMin.y) camera->target.y = player->position.y;
+    if (player->position.x > bboxWorldMax.x) camera->target.x = bboxWorldMin.x + (player->position.x - bboxWorldMax.x);
+    if (player->position.y > bboxWorldMax.y) camera->target.y = bboxWorldMin.y + (player->position.y - bboxWorldMax.y);
 }

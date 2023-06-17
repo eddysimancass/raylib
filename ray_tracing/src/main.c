@@ -97,9 +97,6 @@ int main(void)
 
     shift_points(projected_points);
     get_projection(projected_points, POINTS, focal_length);
-    // rotate(projected_points, POINTS, 90);
-    // get_projection(projected_points, POINTS, focal_length);
-    //copy_points(projected_points, points, POINTS);
 
     InitWindow(screenWidth, screenHeight, "ray casting");
 
@@ -163,16 +160,24 @@ void get_projection(vertex *points[], int SIZE, const int focal_length) {
 
 void rotate(vertex *points[], int SIZE, double angle) {
     int new_x;
-    int new_z;
+    int new_y;
 
     angle = angle*PI/180;
 
-    for (int i = 0; i < SIZE; i++) {
-        new_x = points[i]->x*cos(angle) + -1*points[i]->y*sin(angle);
-        new_z = points[i]->x*sin(angle) + points[i]->y*cos(angle);
+    // for (int i = 0; i < SIZE; i++) {
+    //     new_x = points[i]->x*cos(angle) + -1*points[i]->y*sin(angle);
+    //     new_y = points[i]->x*sin(angle) + points[i]->y*cos(angle);
 
-        points[i]->x = new_x;
-        points[i]->y = new_z;
+    //     points[i]->x = new_x;
+    //     points[i]->y = new_y;
+    // }
+
+    for (int i = 0; i < SIZE; i++) {
+        new_x = points[i]->y*cos(angle) + -1*points[i]->z*sin(angle);
+        new_y = points[i]->y*sin(angle) + points[i]->z*cos(angle);
+
+        points[i]->y = new_x;
+        points[i]->z = new_y;
     }
 }
 
